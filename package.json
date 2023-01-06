@@ -17,7 +17,6 @@
   },
   "workspaces": [
     "packages/amqp",
-    "packages/core",
-    "packages/http"
+    "packages/core"
   ]
 }

@@ -4,7 +4,7 @@ import {
 } from '../interfaces';
 
 export interface ITaskRequest {
-  id: string;
+  id?: string;
   payload: string;
   ttl?: number;
 }
@@ -25,4 +25,15 @@ export interface ITaskRegistryConfig extends ITaskActionConfig {
 
 export interface ITaskRegistry extends IInitable, IDestroyable {
   pub(task: ITaskRequest): Promise<ITaskResult>;
+}
+
+export interface ITaskResponseMeta {
+  status: number;
+  msg?: string;
+  data?: unknown;
+}
+
+export interface ITaskResponse {
+  meta: ITaskResponseMeta;
+  data?: unknown;
 }

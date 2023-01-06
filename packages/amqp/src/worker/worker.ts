@@ -3,13 +3,14 @@
 import {
   constants,
   InternalError,
+  IServiceWorker,
+  IServiceWorkerStatic,
+  ITaskResponse,
   IUseMessageDecoder,
   IUseMessageEncoder,
   IWorker,
-  IServiceWorker,
   TMessageDecodeFnc,
   TMessageEncodeFnc,
-  IServiceWorkerStatic,
 } from '@microservices/core';
 import {
   Channel,
@@ -66,29 +67,62 @@ export class AmqpWorker implements IWorker, IUseMessageEncoder, IUseMessageDecod
           return;
         }
 
+        const answerFnc = async (meta: ITaskResponse['meta'], data?: ITaskResponse['data']) => {
+          let replyMsg = await this.getMessageEncoder()({meta, data});
+          if (typeof replyMsg === 'string') {
+            replyMsg = Buffer.from(replyMsg);
+          }
+
+          this.channel?.publish('', msg.properties.replyTo, replyMsg, {
+            messageId: msg.properties.messageId,
+          });
+        };
+
+        let decodedMessage: unknown;
+
         try {
-          const answerFnc = async (data: unknown) => {
-            let replyMsg = await this.getMessageEncoder()(data);
-            if (typeof replyMsg === 'string') {
-              replyMsg = Buffer.from(replyMsg);
-            }
-
-            this.channel?.publish('', msg.properties.replyTo, replyMsg, {
-              messageId: msg.properties.messageId,
-            });
-          };
-
-          await answerFnc(
-            await (service[methodName as keyof typeof service] as unknown as (...args: any) => Promise<void>)(
-              await this.getMessageDecoder()(msg.content),
-            )
-          );
+          decodedMessage = await this.getMessageDecoder()(msg.content);
         } catch (e) {
+          const error = e as Error;
+
+          answerFnc({
+            status: 500,
+            data: error,
+            msg: error.message,
+          });
+          return;
+        }
+
+        if (!Array.isArray(decodedMessage)) {
+          answerFnc({
+            status: 500,
+            msg: 'Incorrect type of message. Array is expected.',
+          });
+          return;
+        }
+
+        try {
+          const response = await (service[methodName as keyof typeof service] as unknown as (...args: any) => Promise<void>)(
+            ...decodedMessage,
+          );
+
+          await answerFnc({
+            status: 200,
+          }, response);
+        } catch (e) {
+          const error = e as Error;
+
           if (this.config.onMessageFail) {
             this.config.onMessageFail(msg);
           } else {
-            this.channel?.nack(msg);
+            this.channel?.nack(msg, false, false);
           }
+
+          answerFnc({
+            status: 500,
+            data: error,
+            msg: error.message,
+          });
           return;
         }
 
@@ -112,7 +146,7 @@ export class AmqpWorker implements IWorker, IUseMessageEncoder, IUseMessageDecod
     throw new InternalError('Method "getMessageDecoder" is not implemented.');
   }
 
-  public getMessageEncoder(): TMessageEncodeFnc {
+  public getMessageEncoder(): TMessageEncodeFnc<ITaskResponse> {
     throw new InternalError('Method "getMessageEncoder" is not implemented.');
   }
 }
